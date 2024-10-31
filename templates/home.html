@@ -1,0 +1,1168 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>YOLOv5 Annotator with Segmentation Mode</title>
+  <style>
+    /* Adjust the body to remove any unnecessary styling */
+    /* Body remains the same */
+    body {
+      display: flex;
+      flex-direction: row;
+      height: 100vh;
+      margin: 0;
+      font-family: Arial, sans-serif;
+    }
+
+    /* Left and right sidebars remain the same */
+    #file-list,
+    #txt-file-list {
+      flex: 0 0 10%;
+      overflow-y: auto;
+      border-right: 2px solid #000;
+      padding: 10px;
+    }
+
+    #txt-file-list {
+      border-left: 2px solid #000;
+      border-right: none;
+      min-width: 150px;
+    }
+
+    /* Canvas container setup */
+    #canvas-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      /* Prevent content overflow */
+    }
+
+    #canvas-wrapper {
+      height: 85%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #canvas {
+      border: 2px solid #000;
+      cursor: none;
+      width: 100%;
+      height: 100%;
+    }
+
+    #cursorPosition {
+      display: inline-block;
+      padding: 5px;
+      background-color: #f0f0f0;
+      margin: 5px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+
+    #annotations-wrapper {
+      height: 15%;
+      /* don't forget #canvas-wrapper*/
+      overflow-y: auto;
+      padding: 10px;
+    }
+
+    #annotations {
+      margin: 0;
+    }
+
+    .filename,
+    .txt-filename {
+      margin: 5px 0;
+      cursor: pointer;
+      padding: 3px;
+      transition: background-color 0.2s;
+    }
+
+    .filename:hover,
+    .txt-filename:hover {
+      background-color: #f0f0f0;
+    }
+
+    .selected {
+      background-color: #d0e7ff;
+      border: 1px solid #1a73e8;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="file-list">
+    <h3>Image Files</h3>
+    <input type="file" id="upload-folder" webkitdirectory directory multiple>
+  </div>
+  <div id="canvas-container">
+    <div id="canvas-wrapper">
+      <canvas id="canvas"></canvas>
+      <span id="cursorPosition">Cursor: (x: 0.000000, y: 0.000000)</span>
+    </div>
+    <div id="annotations-wrapper">
+      <pre id="annotations"></pre>
+    </div>
+  </div>
+
+  <div id="txt-file-list">
+    <h3>Annotation Files</h3>
+  </div>
+  <script>
+    const uploadFolder = document.getElementById('upload-folder');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const annotations = document.getElementById('annotations');
+    const fileList = document.getElementById('file-list');
+    const txtFileList = document.getElementById('txt-file-list');
+    const cursorPosition = document.getElementById('cursorPosition');
+    let image = new Image();
+    let startX = 0, startY = 0, endX = 0, endY = 0;
+    let drawingStarted = false;
+    let imageFiles = [];
+    let currentImageFilename = '';
+    let xStart = 0, yStart = 0, renderableWidth = 0, renderableHeight = 0;
+    let selectedImageElement = null;
+    let currentImageIndex = -1;
+    let currentMode = 'detection'; // 'detection' or 'segmentation'
+    let shapes = [];
+    let currentShape = null;
+    let isDraggingHandle = false;
+    let draggedHandle = null;
+    let draggedHandleIndex = -1;
+    let isRotationMode = false;
+
+
+    function resizeCanvas() {
+      const container = document.getElementById('canvas');
+      const rect = container.getBoundingClientRect();
+
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+
+      redrawCanvas();
+    }
+
+
+    window.addEventListener('load', () => {
+      resizeCanvas();
+      displayTxtFileNames();
+    });
+    window.addEventListener('resize', resizeCanvas);
+
+    uploadFolder.addEventListener('change', (e) => {
+      const allFiles = Array.from(e.target.files);
+      imageFiles = allFiles.filter(file => file.type.startsWith('image/'));
+      displayFileNames();
+    });
+
+    function displayFileNames() {
+      fileList.innerHTML = '<h3>Image Files</h3>';
+      fileList.appendChild(uploadFolder);
+
+      imageFiles.sort(
+        (a, b) => a.name.localeCompare(
+          b.name,
+          undefined,
+          { numeric: true, sensitivity: 'base' })
+      );
+
+      imageFiles.forEach((file, index) => {
+        const fileItem = document.createElement('div');
+        fileItem.classList.add('filename');
+        fileItem.textContent = file.name;
+        fileItem.addEventListener(
+          'click', () => openImageForAnnotation(index, fileItem)
+        );
+        fileList.appendChild(fileItem);
+      });
+    }
+
+    function displayTxtFileNames() {
+      fetch('http://localhost:5000/list_annotations')
+        .then(response => response.json())
+        .then(data => {
+          let txtFiles = data.files;
+
+          txtFiles.sort(
+            (a, b) => a.localeCompare(
+              b,
+              undefined,
+              { numeric: true, sensitivity: 'base' })
+          );
+
+          txtFileList.innerHTML = '<h3>Annotation Files</h3>';
+          txtFiles.forEach((filename) => {
+            const txtItem = document.createElement('div');
+            txtItem.classList.add('txt-filename');
+            txtItem.textContent = filename;
+            txtItem.addEventListener(
+              'click', () => openAnnotationFile(filename)
+            );
+            txtFileList.appendChild(txtItem);
+          });
+        })
+        .catch(error => console.error('Error fetching annotation files:', error));
+    }
+
+    function openImageForAnnotation(index, fileItem) {
+      currentImageIndex = index;
+
+      if (selectedImageElement) {
+        selectedImageElement.classList.remove('selected');
+      }
+
+      fileItem.classList.add('selected');
+      selectedImageElement = fileItem;
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        image.onload = () => {
+          resizeCanvas();
+          shapes = [];
+          annotations.textContent = '';
+          const imageNameWithoutExtension =
+            imageFiles[index].name.split('.').slice(0, -1).join('.');
+          currentImageFilename = imageNameWithoutExtension;
+          redrawCanvas();
+
+          if (currentMode === 'detection') {
+            // Attempt to load detection annotations (.txt)
+            const detectionFilename = currentImageFilename + '.txt';
+            fetch(`http://localhost:5000/annotations/${detectionFilename}`)
+              .then(response => {
+                if (response.ok) {
+                  return response.text();
+                } else {
+                  const msg = 'Detection annotation file does not exist';
+                  throw new Error(msg);
+                }
+              })
+              .then(text => {
+                const lines = text.split('\n').filter(
+                  line => line.trim() !== ''
+                );
+                shapes = lines.map(line => {
+                  const [classId, centerX, centerY, width, height] =
+                    line.split(' ').map(Number);
+                  return {
+                    classId,
+                    type: 'rectangle',
+                    centerX,
+                    centerY,
+                    width,
+                    height
+                  };
+                });
+                updateAnnotations();
+              })
+              .catch(error => {
+                console.log(error.message);
+                shapes = [];
+                annotations.textContent = '';
+                redrawCanvas();
+              });
+          } else if (currentMode === 'segmentation') {
+            // Attempt to load segmentation annotations (.json)
+            const segmentationFilename = currentImageFilename + '.json';
+            fetch(`http://localhost:5000/annotations/${segmentationFilename}`)
+              .then(response => {
+                if (response.ok) {
+                  return response.json();
+                } else {
+                  const msg = 'Segmentation annotation file does not exist';
+                  throw new Error(msg);
+                }
+              })
+              .then(data => {
+                const imageId = currentImageIndex + 1;
+                const imageAnnotations = data.annotations.filter(
+                  ann => ann.image_id === imageId
+                );
+
+                shapes = imageAnnotations.map(ann => {
+                  const segmentation = ann.segmentation[0];
+                  const [xMin, yMin, width, height] = ann.bbox;
+                  const centerX = xMin + width / 2;
+                  const centerY = yMin + height / 2;
+
+                  // Convert absolute coordinates to normalized coordinates
+                  const normCenterX = centerX / image.width;
+                  const normCenterY = centerY / image.height;
+                  const normWidth = width / image.width;
+                  const normHeight = height / image.height;
+
+                  return {
+                    classId: ann.category_id,
+                    type: 'ellipse',
+                    centerX: normCenterX,
+                    centerY: normCenterY,
+                    width: normWidth,
+                    height: normHeight,
+                    polygon: segmentation
+                  };
+                });
+                updateAnnotations();
+              })
+              .catch(error => {
+                console.log(error.message);
+                shapes = [];
+                annotations.textContent = '';
+                redrawCanvas();
+              });
+          }
+        };
+        image.src = reader.result;
+      };
+      reader.readAsDataURL(imageFiles[index]);
+    }
+
+    function openAnnotationFile(filename) {
+      if (filename.endsWith('.txt')) {
+        // Load detection annotations
+        fetch(`http://localhost:5000/annotations/${filename}`)
+          .then(response => response.text())
+          .then(text => {
+            const lines = text
+              .split('\n')
+              .filter(line => line.trim() !== '');
+            shapes = lines.map(line => {
+              const [classId, centerX, centerY, width, height] =
+                line.split(' ').map(Number);
+              return {
+                classId,
+                type: 'rectangle',
+                centerX,
+                centerY,
+                width,
+                height
+              };
+            });
+            currentMode = 'detection';
+            updateAnnotations();
+          })
+          .catch(error => console.error(
+            'Error fetching annotation file:', error)
+          );
+      } else if (filename.endsWith('.json')) {
+        // Load segmentation annotations
+        fetch(`http://localhost:5000/annotations/${filename}`)
+          .then(response => response.json())
+          .then(data => {
+            const imageId = currentImageIndex + 1;
+            const imageAnnotations =
+              data.annotations.filter(
+                ann => ann.image_id === imageId
+              );
+
+            shapes = imageAnnotations.map(ann => {
+              const segmentation = ann.segmentation[0];
+              const [xMin, yMin, width, height] = ann.bbox;
+              const centerX = xMin + width / 2;
+              const centerY = yMin + height / 2;
+
+              // Convert absolute coordinates to normalized coordinates
+              const normCenterX = centerX / image.width;
+              const normCenterY = centerY / image.height;
+              const normWidth = width / image.width;
+              const normHeight = height / image.height;
+
+              return {
+                classId: ann.category_id,
+                type: 'ellipse',
+                centerX: normCenterX,
+                centerY: normCenterY,
+                width: normWidth,
+                height: normHeight,
+                polygon: segmentation
+              };
+            });
+            currentMode = 'segmentation';
+            updateAnnotations();
+          })
+          .catch(error => console.error(
+            'Error fetching annotation file:', error)
+          );
+      }
+    }
+
+    function openNextImage() {
+      if (currentImageIndex < imageFiles.length - 1) {
+        const nextIndex = currentImageIndex + 1;
+        const fileItems = fileList.querySelectorAll('.filename');
+        const nextFileItem = fileItems[nextIndex];
+        openImageForAnnotation(nextIndex, nextFileItem);
+      } else {
+        alert('No more images.');
+      }
+    }
+
+    function toggleMode() {
+      if (currentMode === 'detection') {
+        currentMode = 'segmentation';
+        alert('Switched to segmentation mode');
+
+        shapes = [];
+        annotations.textContent = '';
+        redrawCanvas();
+
+        if (currentImageIndex !== -1) {
+          openImageForAnnotation(
+            currentImageIndex, selectedImageElement
+          );
+        }
+      } else {
+        currentMode = 'detection';
+        alert('Switched to detection mode');
+
+        shapes = [];
+        annotations.textContent = '';
+        redrawCanvas();
+
+        if (currentImageIndex !== -1) {
+          openImageForAnnotation(
+            currentImageIndex, selectedImageElement
+          );
+        }
+      }
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+      if (currentMode === 'segmentation' && currentShape) {
+        const { x, y } = getMousePosition(e);
+
+        if (isRotationMode) {
+          // Check if a rotation handle is clicked
+          const handleIndex = getHandleAtPoint(x, y);
+          if (handleIndex !== -1) {
+            isDraggingHandle = true;
+            draggedHandleIndex = handleIndex;
+            isRotating = true;
+            initialMouseAngle = Math.atan2(
+              y - currentShape.centerY,
+              x - currentShape.centerX
+            );
+            initialRotation = currentShape.rotation;
+          }
+        } else {
+          // Existing code for resizing
+          const handleIndex = getHandleAtPoint(x, y);
+          if (handleIndex !== -1) {
+            isDraggingHandle = true;
+            draggedHandleIndex = handleIndex;
+          }
+        }
+      }
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+      isDraggingHandle = false;
+      draggedHandleIndex = -1;
+    });
+
+
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      if (mouseX >= xStart && mouseX <= xStart + renderableWidth &&
+        mouseY >= yStart && mouseY <= yStart + renderableHeight) {
+
+        const imageX = (mouseX - xStart) / renderableWidth;
+        const imageY = (mouseY - yStart) / renderableHeight;
+
+        const relX = imageX.toFixed(6);
+        const relY = imageY.toFixed(6);
+        cursorPosition.textContent =
+          `Cursor: (x: ${relX}, y: ${relY})`;
+
+        // Clear and redraw the canvas
+        redrawCanvas();
+
+        // Draw crosshairs
+        ctx.strokeStyle = 'green';
+        ctx.beginPath();
+        ctx.moveTo(mouseX, yStart);
+        ctx.lineTo(mouseX, yStart + renderableHeight);
+        ctx.moveTo(xStart, mouseY);
+        ctx.lineTo(xStart + renderableWidth, mouseY);
+        ctx.stroke();
+
+        if (currentMode === 'segmentation') {
+          if (isDraggingHandle && currentShape) {
+            // dragging a handle to resize the ellipse
+            const { x, y } = getMousePosition(e);
+            handleDragging(x, y);
+            redrawCanvas();
+          } else if (currentShape) {
+            // Not dragging, but hovering over the current shape
+            // Optionally, change cursor style
+          } else if (drawingStarted) {
+            // User is drawing a new ellipse (initial drag)
+            endX = mouseX;
+            endY = mouseY;
+
+            const rectStartX = Math.max(
+              xStart, Math.min(startX, endX)
+            );
+            const rectStartY = Math.max(
+              yStart, Math.min(startY, endY)
+            );
+            const rectEndX = Math.min(
+              xStart + renderableWidth,
+              Math.max(startX, endX)
+            );
+            const rectEndY = Math.min(
+              yStart + renderableHeight,
+              Math.max(startY, endY)
+            );
+
+            const rectWidth = rectEndX - rectStartX;
+            const rectHeight = rectEndY - rectStartY;
+
+            const centerX = (rectStartX + rectEndX) / 2;
+            const centerY = (rectStartY + rectEndY) / 2;
+
+            ctx.fillStyle = 'rgba(0, 0, 255, 0.2)';
+            ctx.strokeStyle = 'blue';
+            ctx.beginPath();
+            ctx.ellipse(
+              centerX,
+              centerY,
+              rectWidth / 2,
+              rectHeight / 2,
+              0,
+              0,
+              2 * Math.PI
+            );
+            ctx.fill();
+            ctx.stroke();
+          }
+        } else if (currentMode === 'detection') {
+          if (drawingStarted) {
+            // User is drawing a rectangle
+            const rectStartX = Math.max(
+              xStart,
+              Math.min(startX, mouseX)
+            );
+            const rectStartY = Math.max(
+              yStart,
+              Math.min(startY, mouseY)
+            );
+            const rectEndX = Math.min(
+              xStart + renderableWidth,
+              Math.max(startX, mouseX)
+            );
+            const rectEndY = Math.min(
+              yStart + renderableHeight,
+              Math.max(startY, mouseY)
+            );
+
+            const rectWidth = rectEndX - rectStartX;
+            const rectHeight = rectEndY - rectStartY;
+
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+            ctx.strokeStyle = 'orange';
+            ctx.fillRect(rectStartX, rectStartY, rectWidth, rectHeight);
+            ctx.strokeRect(rectStartX, rectStartY, rectWidth, rectHeight);
+          }
+        }
+
+      } else {
+        cursorPosition.textContent = 'Cursor: outside image';
+        redrawCanvas();
+      }
+    });
+
+    function getMousePosition(e) {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const x = (mouseX - xStart) / renderableWidth;
+      const y = (mouseY - yStart) / renderableHeight;
+
+      return { x, y };
+    }
+
+    function getHandleAtPoint(x, y) {
+      if (!currentShape) return -1;
+
+      const { centerX, centerY, width, height } = currentShape;
+      const boxCenterX = xStart + centerX * renderableWidth;
+      const boxCenterY = yStart + centerY * renderableHeight;
+      const boxWidth = width * renderableWidth;
+      const boxHeight = height * renderableHeight;
+
+      const handleSize = 8;
+      const positions = [
+        // Top-left
+        { x: boxCenterX - boxWidth / 2, y: boxCenterY - boxHeight / 2 },
+        // Top-right
+        { x: boxCenterX + boxWidth / 2, y: boxCenterY - boxHeight / 2 },
+        // Bottom-right
+        { x: boxCenterX + boxWidth / 2, y: boxCenterY + boxHeight / 2 },
+        // Bottom-left
+        { x: boxCenterX - boxWidth / 2, y: boxCenterY + boxHeight / 2 }
+      ];
+
+      for (let i = 0; i < positions.length; i++) {
+        const pos = positions[i];
+        const dx = (pos.x - (xStart + x * renderableWidth));
+        const dy = (pos.y - (yStart + y * renderableHeight));
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance <= handleSize / 2) {
+          return i; // Return the index of the handle
+        }
+      }
+      return -1;
+    }
+
+    function handleDragging(x, y) {
+      if (draggedHandleIndex === -1 || !currentShape) return;
+
+      const { centerX, centerY, width, height } = currentShape;
+      let newWidth = width;
+      let newHeight = height;
+      let newCenterX = centerX;
+      let newCenterY = centerY;
+
+      // Adjust width and height based on which handle is dragged
+      if (draggedHandleIndex === 0) { // Top-left
+        const rightX = centerX + width / 2;
+        const bottomY = centerY + height / 2;
+        newWidth = rightX - x;
+        newHeight = bottomY - y;
+        newCenterX = x + newWidth / 2;
+        newCenterY = y + newHeight / 2;
+      } else if (draggedHandleIndex === 1) { // Top-right
+        const leftX = centerX - width / 2;
+        const bottomY = centerY + height / 2;
+        newWidth = x - leftX;
+        newHeight = bottomY - y;
+        newCenterX = leftX + newWidth / 2;
+        newCenterY = y + newHeight / 2;
+      } else if (draggedHandleIndex === 2) { // Bottom-right
+        const leftX = centerX - width / 2;
+        const topY = centerY - height / 2;
+        newWidth = x - leftX;
+        newHeight = y - topY;
+        newCenterX = leftX + newWidth / 2;
+        newCenterY = topY + newHeight / 2;
+      } else if (draggedHandleIndex === 3) { // Bottom-left
+        const rightX = centerX + width / 2;
+        const topY = centerY - height / 2;
+        newWidth = rightX - x;
+        newHeight = y - topY;
+        newCenterX = x + newWidth / 2;
+        newCenterY = topY + newHeight / 2;
+      }
+
+      // Update the currentShape
+      currentShape.width = newWidth;
+      currentShape.height = newHeight;
+      currentShape.centerX = newCenterX;
+      currentShape.centerY = newCenterY;
+    }
+
+    function isPointInEllipse(x, y, shape) {
+      const dx = x - shape.centerX;
+      const dy = y - shape.centerY;
+      const cos = Math.cos(-shape.rotation);
+      const sin = Math.sin(-shape.rotation);
+
+      // Rotate the point back to align with the ellipse
+      const rx = dx * cos - dy * sin;
+      const ry = dx * sin + dy * cos;
+
+      return (rx * rx) / ((shape.width / 2) ** 2) +
+        (ry * ry) / ((shape.height / 2) ** 2) <= 1;
+    }
+
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      if (mouseX >= xStart && mouseX <= xStart + renderableWidth &&
+        mouseY >= yStart && mouseY <= yStart + renderableHeight) {
+
+        if (currentMode === 'segmentation') {
+          if (currentShape && !drawingStarted) {
+            const { x, y } = getMousePosition(e);
+            if (isPointInEllipse(x, y, currentShape)) {
+              // Toggle between resize and rotation modes
+              isRotationMode = !isRotationMode;
+              redrawCanvas();
+            }
+          } else if (!drawingStarted && !currentShape) {
+            // Start drawing a new ellipse
+            startX = mouseX;
+            startY = mouseY;
+            drawingStarted = true;
+          } else if (drawingStarted && !currentShape) {
+            // Finish initial drawing and enter editing mode
+            endX = mouseX;
+            endY = mouseY;
+            drawingStarted = false;
+
+            const rectStartX = Math.max(
+              xStart, Math.min(startX, endX)
+            );
+            const rectStartY = Math.max(
+              yStart, Math.min(startY, endY)
+            );
+            const rectEndX = Math.min(
+              xStart + renderableWidth,
+              Math.max(startX, endX)
+            );
+            const rectEndY = Math.min(
+              yStart + renderableHeight,
+              Math.max(startY, endY)
+            );
+
+            const rectWidth = rectEndX - rectStartX;
+            const rectHeight = rectEndY - rectStartY;
+
+            const boxStartX = (rectStartX - xStart) / renderableWidth;
+            const boxStartY = (rectStartY - yStart) / renderableHeight;
+            const boxEndX = (rectEndX - xStart) / renderableWidth;
+            const boxEndY = (rectEndY - yStart) / renderableHeight;
+
+            const boxCenterX = (boxStartX + boxEndX) / 2;
+            const boxCenterY = (boxStartY + boxEndY) / 2;
+            const boxWidth = boxEndX - boxStartX;
+            const boxHeight = boxEndY - boxStartY;
+
+            currentShape = {
+              type: 'ellipse',
+              classId: 0,
+              centerX: boxCenterX,
+              centerY: boxCenterY,
+              width: boxWidth,
+              height: boxHeight,
+              rotation: 0
+            };
+            isRotationMode = false;
+            redrawCanvas();
+          }
+        } else if (currentMode === 'detection') {
+          if (!drawingStarted) {
+            // Start drawing a rectangle
+            startX = mouseX;
+            startY = mouseY;
+            drawingStarted = true;
+          } else {
+            // Finish drawing the rectangle
+            endX = mouseX;
+            endY = mouseY;
+            drawingStarted = false;
+
+            const xMin = Math.max(xStart, Math.min(startX, endX));
+            const yMin = Math.max(yStart, Math.min(startY, endY));
+            const xMax = Math.min(
+              xStart + renderableWidth,
+              Math.max(startX, endX)
+            );
+            const yMax = Math.min(
+              yStart + renderableHeight,
+              Math.max(startY, endY)
+            );
+
+            const boxStartX = (xMin - xStart) / renderableWidth;
+            const boxStartY = (yMin - yStart) / renderableHeight;
+            const boxEndX = (xMax - xStart) / renderableWidth;
+            const boxEndY = (yMax - yStart) / renderableHeight;
+
+            const boxCenterX = (boxStartX + boxEndX) / 2;
+            const boxCenterY = (boxStartY + boxEndY) / 2;
+            const boxWidth = boxEndX - boxStartX;
+            const boxHeight = boxEndY - boxStartY;
+
+            shapes.push({
+              type: 'rectangle',
+              classId: 0,
+              centerX: boxCenterX,
+              centerY: boxCenterY,
+              width: boxWidth,
+              height: boxHeight
+            });
+            updateAnnotations();
+          }
+        }
+      }
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && drawingStarted) {
+        drawingStarted = false;
+        redrawCanvas();
+      }
+      if (e.key === 's') {
+        saveAnnotations();
+      }
+      if (e.key === 'n') {
+        openNextImage();
+      }
+      if (e.key === 'm') {
+        saveAnnotations();
+        openNextImage();
+      }
+      if (e.key === 'e') {
+        toggleMode();
+      }
+      if (e.key === 'd' && currentShape) {
+        // Finalize the current shape
+        shapes.push({ ...currentShape });
+        currentShape = null;
+        redrawCanvas();
+        updateAnnotations();
+      }
+    });
+
+    function saveAnnotations() {
+      if (currentMode === 'detection') {
+        saveDetectionAnnotations();
+      } else if (currentMode === 'segmentation') {
+        saveSegmentationAnnotations();
+      }
+    }
+
+
+    function saveDetectionAnnotations() {
+      let annotationText = '';
+
+      if (shapes.length > 0) {
+        annotationText = shapes.map(
+          ({ type, classId, centerX, centerY, width, height }) =>
+            `${classId} ${type}` +
+            `${centerX.toFixed(6)} ${centerY.toFixed(6)}` +
+            `${width.toFixed(6)} ${height.toFixed(6)}`
+        ).join('\n');
+      }
+
+      fetch('http://localhost:5000/save_annotation', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          filename: currentImageFilename,
+          content: annotationText
+        }),
+      })
+        .then(response => {
+          if (response.ok) {
+            alert('Annotation saved successfully on the server!');
+            displayTxtFileNames(); // Refresh the list from the server
+          } else {
+            alert('Failed to save annotation.');
+          }
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    function saveSegmentationAnnotations() {
+      const imageNameWithoutExtension =
+        imageFiles[currentImageIndex].name.split('.').slice(0, -1).join('.');
+      const jsonFilename = imageNameWithoutExtension + '.json';
+      console.log('Saving segmentation annotations with filename:',
+        jsonFilename
+      );
+
+      const imageId = currentImageIndex + 1; // Unique image ID
+      const annotationsList = [];
+      let annotationId = 1; // Start annotation IDs from 1
+
+      shapes.forEach(shape => {
+        const { type, classId, centerX, centerY, width, height } = shape;
+
+        if (type === 'ellipse') {
+          // Convert normalized coordinates to absolute coordinates
+          const absCenterX = centerX * image.width;
+          const absCenterY = centerY * image.height;
+          const absRadiusX = (width * image.width) / 2;
+          const absRadiusY = (height * image.height) / 2;
+
+          // Approximate the ellipse with a polygon
+          const polygon = ellipseToPolygon(
+            absCenterX,
+            absCenterY,
+            absRadiusX,
+            absRadiusY,
+            0,
+            50 // 50 points
+          );
+
+          // Calculate area and bounding box
+          const area = calculatePolygonArea(polygon);
+          const [xMin, yMin, boxWidth, boxHeight] =
+            calculateBoundingBox(polygon);
+
+          const annotation = {
+            "id": annotationId++,
+            "image_id": imageId,
+            "category_id": classId,
+            "segmentation": [polygon],
+            "area": area,
+            "bbox": [xMin, yMin, boxWidth, boxHeight],
+            "iscrowd": 0
+          };
+          annotationsList.push(annotation);
+        }
+        // Handle other shape types if necessary
+      });
+
+      const cocoJson = {
+        "images": [
+          {
+            "id": imageId,
+            "file_name": imageFiles[currentImageIndex].name,
+            "width": image.width,
+            "height": image.height
+          }
+        ],
+        "annotations": annotationsList,
+        "categories": [
+          {
+            "id": 0,
+            "name": "object",
+            "supercategory": "none"
+          }
+          // Add more categories if needed
+        ]
+      };
+
+      // Save the JSON to the server
+      fetch('http://localhost:5000/save_annotation', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          filename: jsonFilename,
+          content: JSON.stringify(cocoJson)
+        }),
+      })
+        .then(response => {
+          if (response.ok) {
+            alert('Segmentation annotation saved successfully on the server!');
+            displayTxtFileNames(); // Refresh the list from the server
+          } else {
+            alert('Failed to save segmentation annotation.');
+          }
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    function updateAnnotations() {
+      if (currentMode === 'detection') {
+        let annotationText = shapes
+          .filter(shape => shape.type === 'rectangle')
+          .map(({ classId, centerX, centerY, width, height }) =>
+            `${classId}` +
+            `${centerX.toFixed(6)} ${centerY.toFixed(6)}` +
+            `${width.toFixed(6)} ${height.toFixed(6)}`
+          ).join('\n');
+        annotations.textContent = annotationText;
+      } else if (currentMode === 'segmentation') {
+        let annotationText = shapes
+          .filter(shape => shape.type === 'ellipse')
+          .map(({ classId, centerX, centerY, width, height }) => ({
+            classId,
+            centerX: centerX.toFixed(6),
+            centerY: centerY.toFixed(6),
+            width: width.toFixed(6),
+            height: height.toFixed(6)
+          }));
+        annotations.textContent = JSON.stringify(annotationText, null, 2);
+      }
+      redrawCanvas();
+    }
+
+
+
+    function redrawCanvas() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const canvasAspect = canvas.width / canvas.height;
+      const imageAspect = image.naturalWidth / image.naturalHeight;
+
+      if (imageAspect < canvasAspect) {
+        renderableHeight = canvas.height;
+        renderableWidth = image.naturalWidth *
+          (renderableHeight / image.naturalHeight);
+        xStart = (canvas.width - renderableWidth) / 2;
+        yStart = 0;
+      } else {
+        renderableWidth = canvas.width;
+        renderableHeight = image.naturalHeight *
+          (renderableWidth / image.naturalWidth);
+        xStart = 0;
+        yStart = (canvas.height - renderableHeight) / 2;
+      }
+
+      ctx.drawImage(
+        image,
+        xStart,
+        yStart,
+        renderableWidth,
+        renderableHeight
+      );
+
+      shapes.forEach(shape => {
+        drawShape(shape);
+      });
+
+      // Draw the current shape in editing mode
+      if (currentShape) {
+        drawShape(currentShape, true);
+      }
+    }
+
+    // Function to draw a shape
+    function drawShape(shape, isEditing = false) {
+      const { type, centerX, centerY, width, height, rotation } = shape;
+      const boxCenterX = xStart + centerX * renderableWidth;
+      const boxCenterY = yStart + centerY * renderableHeight;
+      const boxWidth = width * renderableWidth;
+      const boxHeight = height * renderableHeight;
+
+      ctx.save();
+      ctx.translate(boxCenterX, boxCenterY);
+      ctx.rotate(rotation || 0);
+      ctx.translate(-boxCenterX, -boxCenterY);
+
+      if (type === 'ellipse') {
+        ctx.strokeStyle = 'blue';
+        ctx.beginPath();
+        ctx.ellipse(
+          boxCenterX,
+          boxCenterY,
+          boxWidth / 2,
+          boxHeight / 2,
+          0,
+          0,
+          2 * Math.PI
+        );
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(0, 0, 255, 0.2)';
+        ctx.fill();
+
+        if (isEditing) {
+          // Draw bounding box and handles
+          drawBoundingBoxAndHandles(
+            boxCenterX, boxCenterY,
+            boxWidth, boxHeight,
+            rotation || 0
+          );
+        }
+      } else if (type === 'rectangle') {
+        // Existing code for rectangles
+        ctx.strokeStyle = 'orange';
+        ctx.strokeRect(
+          boxCenterX - boxWidth / 2, boxCenterY - boxHeight / 2,
+          boxWidth, boxHeight
+        );
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+        ctx.fillRect(
+          boxCenterX - boxWidth / 2, boxCenterY - boxHeight / 2,
+          boxWidth, boxHeight
+        );
+      }
+
+      ctx.restore();
+    }
+
+    function drawBoundingBoxAndHandles(
+      centerX, centerY, width, height, rotation) {
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(rotation);
+      ctx.translate(-centerX, -centerY);
+
+      ctx.strokeStyle = 'red';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(
+        centerX - width / 2, centerY - height / 2,
+        width, height
+      );
+
+      // Draw handles
+      const handleSize = 8;
+      const positions = [
+        { x: centerX - width / 2, y: centerY - height / 2 }, // Top-left
+        { x: centerX + width / 2, y: centerY - height / 2 }, // Top-right
+        { x: centerX + width / 2, y: centerY + height / 2 }, // Bottom-right
+        { x: centerX - width / 2, y: centerY + height / 2 }  // Bottom-left
+      ];
+
+      positions.forEach(pos => {
+        if (isRotationMode) {
+          // Draw arcs as rotation handles
+          ctx.strokeStyle = 'purple';
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, handleSize, 0, Math.PI / 2); // Quarter circle
+          ctx.stroke();
+        } else {
+          // Draw circles as resize handles
+          ctx.fillStyle = 'white';
+          ctx.strokeStyle = 'black';
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, handleSize / 2, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.stroke();
+        }
+      });
+
+      ctx.restore();
+    }
+
+    function ellipseToPolygon(
+      centerX, centerY, radiusX, radiusY, rotation, numPoints) {
+      const points = [];
+      for (let i = 0; i < numPoints; i++) {
+        const theta = (i / numPoints) * 2 * Math.PI;
+        const x = centerX + radiusX * Math.cos(theta);
+        const y = centerY + radiusY * Math.sin(theta);
+        points.push(x, y); // Note: COCO expects a flat array
+      }
+      return points;
+    }
+
+    function calculatePolygonArea(polygon) {
+      let area = 0;
+      const numPoints = polygon.length / 2;
+      for (let i = 0; i < numPoints; i++) {
+        const x1 = polygon[(i * 2) % polygon.length];
+        const y1 = polygon[(i * 2 + 1) % polygon.length];
+        const x2 = polygon[((i * 2 + 2) % polygon.length) || 0];
+        const y2 = polygon[((i * 2 + 3) % polygon.length) || 1];
+        area += (x1 * y2 - x2 * y1);
+      }
+      return Math.abs(area / 2);
+    }
+
+    function calculateBoundingBox(polygon) {
+      const xCoords = [];
+      const yCoords = [];
+      for (let i = 0; i < polygon.length; i += 2) {
+        xCoords.push(polygon[i]);
+        yCoords.push(polygon[i + 1]);
+      }
+      const xMin = Math.min(...xCoords);
+      const yMin = Math.min(...yCoords);
+      const xMax = Math.max(...xCoords);
+      const yMax = Math.max(...yCoords);
+      return [xMin, yMin, xMax - xMin, yMax - yMin];
+    }
+
+  </script>
+</body>
+
+</html>
