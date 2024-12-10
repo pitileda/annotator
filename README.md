@@ -1,0 +1,1 @@
+python app.py --labels-folder ~/projects/data_sets/cars/tmp_labels
