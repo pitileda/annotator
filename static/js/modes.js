@@ -1,11 +1,13 @@
-window.currentMode = 'detection';
+import { redrawCanvas } from "./drawing.js";
+import { openImageForAnnotation } from "./annotation_api.js";
+import { currentMode, setMode } from "./main.js";
 
-window.toggleMode = function() {
+export function toggleMode() {
   if (currentMode === 'detection') {
-    currentMode = 'segmentation';
+    setMode('segmentation');
     alert('Switched to segmentation mode');
   } else {
-    currentMode = 'detection';
+    setMode('detection');
     alert('Switched to detection mode');
   }
 

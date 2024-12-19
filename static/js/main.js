@@ -1,12 +1,15 @@
-// Global variables
-window.canvas = document.getElementById('canvas');
-window.ctx = canvas.getContext('2d');
-window.annotations = document.getElementById('annotations');
-window.fileList = document.getElementById('file-list');
-window.txtFileList = document.getElementById('txt-file-list');
-window.uploadFolder = document.getElementById('upload-folder');
-window.cursorPosition = document.getElementById('cursorPosition');
+import { displayTxtFileNames } from "./annotation_api.js";
+import { resizeCanvas } from "./drawing.js";
+import { openImageForAnnotation } from "./annotation_api.js";
 
+const uploadFolder = document.getElementById('upload-folder');
+
+export let currentMode = 'detection';
+export function setMode(mode) {
+  currentMode = mode;
+}
+
+// Global variables
 window.image = new Image();
 window.xStart = 0; 
 window.yStart = 0; 
@@ -42,7 +45,8 @@ uploadFolder.addEventListener('change', (e) => {
   displayFileNames();
 });
 
-window.displayFileNames = function() {
+const displayFileNames = function() {
+  const fileList = document.getElementById('file-list');
   fileList.innerHTML = '<h3>Image Files</h3>';
   fileList.appendChild(uploadFolder);
 

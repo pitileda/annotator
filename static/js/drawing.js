@@ -1,4 +1,9 @@
-window.resizeCanvas = function() {
+import { HANDLE_SIZE } from "./constants.js";
+
+let canvas = document.getElementById('canvas'); 
+const ctx = canvas.getContext('2d');
+
+export function resizeCanvas() {
   const container = document.getElementById('canvas');
   const rect = container.getBoundingClientRect();
 
@@ -8,7 +13,7 @@ window.resizeCanvas = function() {
   redrawCanvas();
 }
 
-window.redrawCanvas = function() {
+export function redrawCanvas() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   if (image && image.naturalWidth && image.naturalHeight) {
@@ -39,7 +44,7 @@ window.redrawCanvas = function() {
   }
 }
 
-window.drawShape = function(shape, isEditing = false) {
+const drawShape = function(shape, isEditing = false) {
   const { type, centerX, centerY, width, height, rotation = 0 } = shape;
   const boxCenterX = xStart + centerX * renderableWidth;
   const boxCenterY = yStart + centerY * renderableHeight;
@@ -69,7 +74,7 @@ window.drawShape = function(shape, isEditing = false) {
   ctx.restore();
 }
 
-window.drawBoundingBoxAndHandles = function(centerX, centerY, width, height, rotation) {
+const drawBoundingBoxAndHandles = function(centerX, centerY, width, height, rotation) {
   ctx.save();
   ctx.translate(centerX, centerY);
   ctx.rotate(rotation);

@@ -26,13 +26,13 @@
   </div>
 
   <!-- Load scripts in order -->
-  <script src="{{ url_for('static', filename='js/constants.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/modes.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/drawing.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/annotation_api.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/events.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/constants.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/utils.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/modes.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/drawing.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/annotation_api.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/events.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 
 </html>
