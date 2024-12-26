@@ -8,6 +8,9 @@ export let currentMode = 'detection';
 export function setMode(mode) {
   currentMode = mode;
 }
+export function getMode() {
+  return currentMode;
+}
 
 // Global variables
 window.image = new Image();
@@ -35,6 +38,7 @@ window.isRotationMode = false;
 window.addEventListener('load', () => {
   resizeCanvas();
   displayTxtFileNames();
+  // displayFileNames('txt-file-list', '<h3>Annotation Files</h3>');
 });
 
 window.addEventListener('resize', resizeCanvas);
@@ -42,12 +46,12 @@ window.addEventListener('resize', resizeCanvas);
 uploadFolder.addEventListener('change', (e) => {
   const allFiles = Array.from(e.target.files);
   imageFiles = allFiles.filter(file => file.type.startsWith('image/'));
-  displayFileNames();
+  displayFileNames('file-list', '<h3>Image Files</h3>');
 });
 
-const displayFileNames = function() {
-  const fileList = document.getElementById('file-list');
-  fileList.innerHTML = '<h3>Image Files</h3>';
+const displayFileNames = function(id, innerHeader) {
+  const fileList = document.getElementById(id);
+  fileList.innerHTML = innerHeader;
   fileList.appendChild(uploadFolder);
 
   imageFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));

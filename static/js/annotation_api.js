@@ -1,6 +1,6 @@
 import { SERVER_URL } from "./constants.js";
 import { redrawCanvas, resizeCanvas } from "./drawing.js";
-import { currentMode, setMode } from "./main.js";
+import { setMode, getMode } from "./main.js";
 import { ellipseToPolygon, calculatePolygonArea } from "./utils.js";
 import { calculateBoundingBox } from "./utils.js";
 
@@ -36,10 +36,92 @@ export function displayTxtFileNames() {
     .catch(error => console.error('Error fetching annotation files:', error));
 }
 
+function findLocalImageFile(annotationFilename) {
+  const baseName = annotationFilename.replace(/\.[^/.]+$/, "");
+
+  const foundIndex = imageFiles.findIndex((file) => {
+    const justName = file.name.replace(/\.[^/.]+$/, "");
+    return justName === baseName; 
+  });
+
+  if (foundIndex === -1) {
+    return null;
+  }
+
+  return {
+    file: imageFiles[foundIndex],
+    index: foundIndex,
+    baseName
+  };
+}
+
+export function openAnnotationFile(filename) {
+  if (filename.endsWith('.txt')) {
+    setMode('detection')
+  } else if (filename.endsWith('.json')) {
+    setMode('segmentation')
+  }
+
+  const found = findLocalImageFile(filename);
+  if (!found) {
+    alert('No local image file matches the annotation file: ' + filename);
+    return;
+  }
+
+  openImageForAnnotation(
+    found.index,
+    null,
+    true
+  );
+
+  if (getMode() === 'detection') {
+    fetch(`${SERVER_URL}/annotations/${filename}`)
+      .then(response => response.text())
+      .then(text => {
+        const lines = text.split('\n').filter(line => line.trim() !== '');
+        shapes = lines.map(line => {
+          const [classId, centerX, centerY, width, height] = line.split(' ').map(Number);
+          return { classId, type: 'rectangle', centerX, centerY, width, height };
+        });
+        updateAnnotations();
+      })
+      .catch(error => console.error('Error fetching annotation file:', error));
+  } else if (getMode() === 'segmentation') {
+    fetch(`${SERVER_URL}/annotations/${filename}`)
+      .then(response => response.json())
+      .then(data => {
+        const imageId = currentImageIndex + 1; 
+        const imageAnnotations = data.annotations.filter(ann => ann.image_id === imageId);
+
+        shapes = imageAnnotations.map(ann => {
+          const [xMin, yMin, w, h] = ann.bbox;
+          const centerX = xMin + w/2;
+          const centerY = yMin + h/2;
+          const normCenterX = centerX / image.width;
+          const normCenterY = centerY / image.height;
+          const normWidth   = w / image.width;
+          const normHeight  = h / image.height;
+
+          return {
+            classId: ann.category_id,
+            type: 'ellipse',
+            centerX: normCenterX,
+            centerY: normCenterY,
+            width: normWidth,
+            height: normHeight,
+            polygon: ann.segmentation[0]
+          };
+        });
+        updateAnnotations();
+      })
+      .catch(error => console.error('Error fetching annotation file:', error));
+  }
+}
+
 export function saveAnnotations() {
-  if (currentMode === 'detection') {
+  if (getMode() === 'detection') {
     saveDetectionAnnotations();
-  } else if (currentMode === 'segmentation') {
+  } else if (getMode() === 'segmentation') {
     saveSegmentationAnnotations();
   }
 }
@@ -135,14 +217,14 @@ function saveSegmentationAnnotations() {
 }
 
 export function updateAnnotations() {
-  if (currentMode === 'detection') {
+  if (getMode() === 'detection') {
     let annotationText = shapes
       .filter(shape => shape.type === 'rectangle')
       .map(({ classId, centerX, centerY, width, height }) =>
         `${classId} ${centerX.toFixed(6)} ${centerY.toFixed(6)} ${width.toFixed(6)} ${height.toFixed(6)}`
       ).join('\n');
     annotations.textContent = annotationText;
-  } else if (currentMode === 'segmentation') {
+  } else if (getMode() === 'segmentation') {
     let annotationText = shapes
       .filter(shape => shape.type === 'ellipse')
       .map(({ classId, centerX, centerY, width, height }) => ({
@@ -157,16 +239,20 @@ export function updateAnnotations() {
   redrawCanvas();
 }
 
-export function openImageForAnnotation(index, fileItem) {
+export function openImageForAnnotation(index, fileItem, skipAnnotationFetch = false) {
   currentImageIndex = index;
 
-  if (selectedImageElement) {
-    selectedImageElement.classList.remove('selected');
+  // If a fileItem (the <div> in the left sidebar) was passed, 
+  // highlight it. If not, do nothing (maybe we are clicking annotation in the right panel).
+  if (fileItem) {
+    if (selectedImageElement) {
+      selectedImageElement.classList.remove('selected');
+    }
+    fileItem.classList.add('selected');
+    selectedImageElement = fileItem;
   }
 
-  fileItem.classList.add('selected');
-  selectedImageElement = fileItem;
-
+  const localFile = imageFiles[index];
   const reader = new FileReader();
   reader.onload = () => {
     image.onload = () => {
@@ -177,61 +263,63 @@ export function openImageForAnnotation(index, fileItem) {
       currentImageFilename = imageNameWithoutExtension;
       redrawCanvas();
 
-      if (currentMode === 'detection') {
-        const detectionFilename = currentImageFilename + '.txt';
-        fetch(`${SERVER_URL}/annotations/${detectionFilename}`)
-          .then(response => response.ok ? response.text() : Promise.reject('No detection file'))
-          .then(text => {
-            const lines = text.split('\n').filter(line => line.trim() !== '');
-            shapes = lines.map(line => {
-              const [classId, centerX, centerY, width, height] = line.split(' ').map(Number);
-              return { classId, type:'rectangle', centerX, centerY, width, height };
+      if (!skipAnnotationFetch) {
+        if (getMode() === 'detection') {
+          const detectionFilename = currentImageFilename + '.txt';
+          fetch(`${SERVER_URL}/annotations/${detectionFilename}`)
+            .then(response => response.ok ? response.text() : Promise.reject('No detection file'))
+            .then(text => {
+              const lines = text.split('\n').filter(line => line.trim() !== '');
+              shapes = lines.map(line => {
+                const [classId, centerX, centerY, width, height] = line.split(' ').map(Number);
+                return { classId, type:'rectangle', centerX, centerY, width, height };
+              });
+              updateAnnotations();
+            })
+            .catch(error => {
+              console.log(error);
+              shapes = [];
+              annotations.textContent = '';
+              redrawCanvas();
             });
-            updateAnnotations();
-          })
-          .catch(error => {
-            console.log(error);
-            shapes = [];
-            annotations.textContent = '';
-            redrawCanvas();
-          });
-      } else {
-        const segmentationFilename = currentImageFilename + '.json';
-        fetch(`${SERVER_URL}/annotations/${segmentationFilename}`)
-          .then(response => response.ok ? response.json() : Promise.reject('No segmentation file'))
-          .then(data => {
-            const imageId = currentImageIndex + 1;
-            const imageAnnotations = data.annotations.filter(ann => ann.image_id === imageId);
+        } else {
+          const segmentationFilename = currentImageFilename + '.json';
+          fetch(`${SERVER_URL}/annotations/${segmentationFilename}`)
+            .then(response => response.ok ? response.json() : Promise.reject('No segmentation file'))
+            .then(data => {
+              const imageId = currentImageIndex + 1;
+              const imageAnnotations = data.annotations.filter(ann => ann.image_id === imageId);
 
-            shapes = imageAnnotations.map(ann => {
-              const segmentation = ann.segmentation[0];
-              const [xMin, yMin, w, h] = ann.bbox;
-              const centerX = xMin + w / 2;
-              const centerY = yMin + h / 2;
-              const normCenterX = centerX / image.width;
-              const normCenterY = centerY / image.height;
-              const normWidth = w / image.width;
-              const normHeight = h / image.height;
+              shapes = imageAnnotations.map(ann => {
+                const segmentation = ann.segmentation[0];
+                const [xMin, yMin, w, h] = ann.bbox;
+                const centerX = xMin + w / 2;
+                const centerY = yMin + h / 2;
+                const normCenterX = centerX / image.width;
+                const normCenterY = centerY / image.height;
+                const normWidth = w / image.width;
+                const normHeight = h / image.height;
 
-              return {
-                classId: ann.category_id,
-                type: 'ellipse',
-                centerX: normCenterX,
-                centerY: normCenterY,
-                width: normWidth,
-                height: normHeight,
-                polygon: segmentation
-              };
+                return {
+                  classId: ann.category_id,
+                  type: 'ellipse',
+                  centerX: normCenterX,
+                  centerY: normCenterY,
+                  width: normWidth,
+                  height: normHeight,
+                  polygon: segmentation
+                };
+              });
+              updateAnnotations();
+            })
+            .catch(error => {
+              console.log(error);
+              shapes = [];
+              annotations.textContent = '';
+              redrawCanvas();
             });
-            updateAnnotations();
-          })
-          .catch(error => {
-            console.log(error);
-            shapes = [];
-            annotations.textContent = '';
-            redrawCanvas();
-          });
-      }
+        }
+      } // end if skip
     };
     image.src = reader.result;
   };
