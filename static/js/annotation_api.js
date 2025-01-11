@@ -1,8 +1,7 @@
 import { SERVER_URL } from "./constants.js";
 import { redrawCanvas, resizeCanvas } from "./drawing.js";
 import { setMode, getMode } from "./main.js";
-import { ellipseToPolygon, calculatePolygonArea } from "./utils.js";
-import { calculateBoundingBox } from "./utils.js";
+import { shapeToPolygon } from "./utils.js";
 
 const annotations = document.getElementById('annotations');
 
@@ -51,11 +50,6 @@ function findLocalImageFile(annotationFilename) {
 }
 
 export function openAnnotationFile(filename) {
-  if (filename.endsWith('.txt')) {
-    setMode('detection')
-  } else if (filename.endsWith('.json')) {
-    setMode('segmentation')
-  }
 
   const found = findLocalImageFile(filename);
   if (!found) {
@@ -97,26 +91,22 @@ export function openAnnotationFile(filename) {
         // segmentation mode => each line is "class x1 y1 x2 y2..."
         lines.forEach(line => {
           const vals = line.trim().split(' ').map(Number);
-          if (vals.length >= 7) {
-            const classId = vals[0];
-            const coords = vals.slice(1);
-            // parse pairs
-            const polygon = [];
-            for (let i = 0; i < coords.length; i += 2) {
-              polygon.push([coords[i], coords[i + 1]]);
-            }
-            shapes.push({
-              type: 'polygon',  // or 'segmentation'
-              classId,
-              points: polygon
-            });
-          } else {
-            console.warn('Line does not match segmentation format, ignoring:', line);
+          const classId = vals[0];
+          const coords = vals.slice(1);
+          // parse pairs
+          const polygon = [];
+          for (let i = 0; i < coords.length; i += 2) {
+            polygon.push([coords[i], coords[i + 1]]);
           }
+          shapes.push({
+            type: 'polygon',  // or 'segmentation'
+            classId,
+            points: polygon
+          });
         });
       }
 
-      //updateAnnotations();
+      updateAnnotations();
     })
     .catch(error => {
       console.error(error);
@@ -128,9 +118,9 @@ export function openAnnotationFile(filename) {
 
 export function saveAnnotations() {
   if (getMode() === 'detection') {
-    saveDetectionAnnotations();
+    return saveDetectionAnnotations();
   } else if (getMode() === 'segmentation') {
-    saveSegmentationAnnotations();
+    return saveSegmentationAnnotations();
   }
 }
 
@@ -153,7 +143,7 @@ function saveDetectionAnnotations() {
 
   const content = lines.join('\n');
 
-  fetch(`${SERVER_URL}/save_annotation`, {
+  return fetch(`${SERVER_URL}/save_annotation`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -173,37 +163,39 @@ function saveDetectionAnnotations() {
 }
 
 function saveSegmentationAnnotations() {
-  if (!shapes || shapes.length === 0) {
-    console.log("No shapes to save in segmentation mode, skipping.");
-  }
+  let lines = shapes.map(s => {
+    // Convert shape => array of [ [x, y], [x2, y2], ... ]
+    const poly = shapeToPolygon(s);
+    if (!poly || poly.length === 0) {
+      // skip empty or unknown shape
+      return null;
+    }
 
-  let lines = shapes
-    .filter(s => s.type === 'polygon')
-    .map(s => {
-      let lineVals = [ s.classId ];
-      // flatten [ [x1,y1], [x2,y2] ... ]
-      s.points.forEach(([x, y]) => {
-        lineVals.push(x.toFixed(6), y.toFixed(6));
-      });
-      return lineVals.join(' ');
+    // Build line: classId x1 y1 x2 y2 ...
+    let lineVals = [ s.classId ?? 0 ];
+    poly.forEach(([x, y]) => {
+      lineVals.push(x.toFixed(6), y.toFixed(6));
     });
+    return lineVals.join(' ');
+  })
+  .filter(Boolean); // remove null entries if shape was unknown
 
   const content = lines.join('\n');
 
-  fetch(`${SERVER_URL}/save_annotation`, {
+  return fetch(`${SERVER_URL}/save_annotation`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      filename: currentImageFilename + '.txt', // segmentation .txt
+      filename: currentImageFilename + '.txt', // same .txt for segmentation
       content
     }),
   })
   .then(response => {
     if (response.ok) {
-      alert('Segmentation annotation saved successfully on the server!');
+      console.log('Segmentation annotation saved successfully on the server!');
       displayTxtFileNames();
     } else {
-      alert('Failed to save segmentation annotation.');
+      console.error('Failed to save segmentation annotation.');
     }
   })
   .catch(error => console.error('Error:', error));
@@ -231,7 +223,7 @@ export function updateAnnotations() {
         let lineVals = [ s.classId ];
         s.points.forEach(([x, y]) => {
           lineVals.push(x.toFixed(6), y.toFixed(6));
-          console.log("s: ", s);
+          // console.log("s: ", s);
         });
         return lineVals.join(' ');
       });
@@ -263,6 +255,7 @@ export function openImageForAnnotation(index, fileItem, skipAnnotationFetch = fa
       // set currentImageFilename for saving
       const imageNameWithoutExtension = imageFiles[index].name.split('.').slice(0, -1).join('.');
       currentImageFilename = imageNameWithoutExtension;
+      window.currentImageFilename = currentImageFilename;
 
       redrawCanvas();
 

@@ -8,22 +8,31 @@
 </head>
 
 <body>
-  <div id="file-list">
-    <h3>Image Files</h3>
-    <input type="file" id="upload-folder" webkitdirectory directory multiple>
+  <div id="top-bar">
+    <button id="modeToggleBtn">Switch to segmentation</button>
   </div>
-  <div id="canvas-container">
-    <div id="canvas-wrapper">
-      <canvas id="canvas"></canvas>
-      <span id="cursorPosition">Cursor: (x: 0.000000, y: 0.000000)</span>
+
+  <div id="main-layout">
+    <div id="file-list">
+      <h3>Image Files</h3>
+      <input type="file" id="upload-folder" webkitdirectory directory multiple>
     </div>
-    <div id="annotations-wrapper">
-      <pre id="annotations"></pre>
+
+    <div id="canvas-container">
+      <div id="canvas-wrapper">
+        <canvas id="canvas"></canvas>
+        <span id="cursorPosition">Cursor: (x: 0.000000, y: 0.000000)</span>
+      </div>
+      <div id="annotations-wrapper">
+        <pre id="annotations"></pre>
+      </div>
+    </div>
+
+    <div id="txt-file-list">
+      <h3>Annotation Files</h3>
     </div>
   </div>
-  <div id="txt-file-list">
-    <h3>Annotation Files</h3>
-  </div>
+
 
   <!-- Load scripts in order -->
   <script type="module" src="{{ url_for('static', filename='js/constants.js') }}"></script>

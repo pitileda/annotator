@@ -1,10 +1,9 @@
 import { getMousePosition, getHandleAtPoint } from "./utils.js";
 import { handleDragging, isPointInEllipse } from "./utils.js";
 import { redrawCanvas } from "./drawing.js";
-import { saveAnnotations, updateAnnotations, openImageForAnnotation } from "./annotation_api.js";
+import { saveAnnotations, updateAnnotations, openImageForAnnotation, openAnnotationFile } from "./annotation_api.js";
 import { toggleMode } from "./modes.js";
-import { currentMode, setMode } from "./main.js";
-import { SERVER_URL } from "./constants.js";
+import { currentMode } from "./main.js";
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -196,56 +195,6 @@ canvas.addEventListener('click', (e) => {
   }
 });
 
-window.openAnnotationFile = function(filename) {
-  if (filename.endsWith('.txt')) {
-    // Load detection
-    fetch(`${SERVER_URL}/annotations/${filename}`)
-      .then(response => response.text())
-      .then(text => {
-        const lines = text.split('\n').filter(line => line.trim() !== '');
-        shapes = lines.map(line => {
-          const [classId, centerX, centerY, width, height] = line.split(' ').map(Number);
-          return { classId, type:'rectangle', centerX, centerY, width, height };
-        });
-        setMode('detection');
-        updateAnnotations();
-      })
-      .catch(error => console.error('Error fetching annotation file:', error));
-  } else if (filename.endsWith('.json')) {
-    // Load segmentation
-    fetch(`${SERVER_URL}/annotations/${filename}`)
-      .then(response => response.json())
-      .then(data => {
-        const imageId = currentImageIndex + 1;
-        const imageAnnotations = data.annotations.filter(ann => ann.image_id === imageId);
-
-        shapes = imageAnnotations.map(ann => {
-          const segmentation = ann.segmentation[0];
-          const [xMin, yMin, w, h] = ann.bbox;
-          const centerX = xMin + w / 2;
-          const centerY = yMin + h / 2;
-          const normCenterX = centerX / image.width;
-          const normCenterY = centerY / image.height;
-          const normWidth = w / image.width;
-          const normHeight = h / image.height;
-
-          return {
-            classId: ann.category_id,
-            type: 'ellipse',
-            centerX: normCenterX,
-            centerY: normCenterY,
-            width: normWidth,
-            height: normHeight,
-            polygon: segmentation
-          };
-        });
-        setMode('segmentation');
-        updateAnnotations();
-      })
-      .catch(error => console.error('Error fetching annotation file:', error));
-  }
-}
-
 window.openNextImage = function() {
   if (currentImageIndex < imageFiles.length - 1) {
     const nextIndex = currentImageIndex + 1;
@@ -264,7 +213,14 @@ window.addEventListener('keydown', (e) => {
     redrawCanvas();
   }
   if (e.key === 's') {
-    saveAnnotations();
+    if (currentShape) {
+      shapes.push({ ...currentShape });
+      currentShape = null;
+    }
+    redrawCanvas();
+    saveAnnotations().then(() => {
+      openAnnotationFile(window.currentImageFilename + '.txt');
+    }).catch(err => console.error(err));
   }
   if (e.key === 'n') {
     openNextImage();

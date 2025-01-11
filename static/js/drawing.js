@@ -61,7 +61,7 @@ function drawShape(shape, isEditing = false) {
     ctx.closePath();
 
     // Fill and stroke
-    ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
     ctx.fill();
     ctx.strokeStyle = 'red';
     ctx.lineWidth = 2;

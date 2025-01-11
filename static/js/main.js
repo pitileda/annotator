@@ -1,6 +1,7 @@
 import { displayTxtFileNames } from "./annotation_api.js";
 import { resizeCanvas } from "./drawing.js";
 import { openImageForAnnotation } from "./annotation_api.js";
+import { toggleMode } from "./modes.js";
 
 const uploadFolder = document.getElementById('upload-folder');
 
@@ -38,7 +39,17 @@ window.isRotationMode = false;
 window.addEventListener('load', () => {
   resizeCanvas();
   displayTxtFileNames();
-  // displayFileNames('txt-file-list', '<h3>Annotation Files</h3>');
+
+  const modeToggleBtn = document.getElementById('modeToggleBtn');
+  
+  modeToggleBtn.addEventListener('click', () => {
+    toggleMode();
+    if (getMode() === 'segmentation') {
+      modeToggleBtn.textContent = 'Switch to detection';
+    } else {
+      modeToggleBtn.textContent = 'Switch to segmentation';
+    }
+  });
 });
 
 window.addEventListener('resize', resizeCanvas);

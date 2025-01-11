@@ -1,32 +1,69 @@
+/* Overall page layout */
+html,
 body {
-  display: flex;
-  flex-direction: row;
-  height: 100vh;
   margin: 0;
+  padding: 0;
+  height: 100%;
+  /* So we can use 100% heights inside */
   font-family: Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+  /* Top bar, then main layout */
 }
 
+/* The top bar across the page */
+#top-bar {
+  height: 40px;
+  /* Adjust as needed */
+  background-color: #f0f0f0;
+  /* Light gray background */
+  display: flex;
+  align-items: center;
+  /* Vertically center the button(s) */
+  padding: 0 10px;
+  /* Left-right padding */
+  border-bottom: 2px solid #000;
+  /* Optional bottom border */
+}
+
+/* The main layout below the top bar */
+#main-layout {
+  flex: 1;
+  /* Fills remaining vertical space */
+  display: flex;
+  flex-direction: row;
+  /* Three columns: file-list, canvas, txt-file-list */
+  height: 100%;
+  /* Fill the rest of the page under the top bar */
+}
+
+/* Left and right sidebars */
 #file-list,
 #txt-file-list {
   flex: 0 0 10%;
   overflow-y: auto;
-  border-right: 2px solid #000;
   padding: 10px;
+}
+
+#file-list {
+  border-right: 2px solid #000;
 }
 
 #txt-file-list {
   border-left: 2px solid #000;
-  border-right: none;
   min-width: 150px;
 }
 
+/* The canvas container in the center */
 #canvas-container {
   flex: 1;
+  /* Takes all remaining horizontal space */
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
+/* The canvas wrapper (85% for the canvas, or whatever you had) */
 #canvas-wrapper {
   height: 85%;
   display: flex;
@@ -35,6 +72,7 @@ body {
   justify-content: center;
 }
 
+/* The actual <canvas> element */
 #canvas {
   border: 2px solid #000;
   cursor: none;
@@ -42,6 +80,7 @@ body {
   height: 100%;
 }
 
+/* Cursor position styling */
 #cursorPosition {
   display: inline-block;
   padding: 5px;
@@ -51,6 +90,7 @@ body {
   border-radius: 4px;
 }
 
+/* The annotations area (bottom 15% in your layout) */
 #annotations-wrapper {
   height: 15%;
   overflow-y: auto;
@@ -61,6 +101,7 @@ body {
   margin: 0;
 }
 
+/* Styling for file names in columns */
 .filename,
 .txt-filename {
   margin: 5px 0;
