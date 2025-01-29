@@ -1,18 +1,20 @@
-import { getMousePosition, getHandleAtPoint } from "./utils.js";
-import { handleDragging, isPointInEllipse } from "./utils.js";
+import { getMousePosition, getEllipseHandleAtPoint } from "./utils.js";
+import { handleDraggingEllipse, isPointInEllipse } from "./utils.js";
 import { redrawCanvas } from "./drawing.js";
 import { saveAnnotations, updateAnnotations, openImageForAnnotation, openAnnotationFile } from "./annotation_api.js";
 import { toggleMode } from "./modes.js";
 import { currentMode } from "./main.js";
+import { identityMatrix, multiply, translate, scale } from "./matrix.js";
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
 // Event Listeners
 canvas.addEventListener('mousedown', (e) => {
-  if (currentMode === 'segmentation' && currentShape) {
+  if (currentMode === 'segmentation' && currentShape && currentShape.type === 'ellipse') {
     const { x, y } = getMousePosition(e);
-    const handleIndex = getHandleAtPoint(x, y);
+    // Use new ellipse handle detection
+    const handleIndex = getEllipseHandleAtPoint(x, y, currentShape);
     if (handleIndex !== -1) {
       isDraggingHandle = true;
       draggedHandleIndex = handleIndex;
@@ -26,6 +28,8 @@ canvas.addEventListener('mouseup', (e) => {
 });
 
 canvas.addEventListener('mousemove', (e) => {
+  // console.log("[DEBUG] mousemove. drawingStarted=", 
+  //   drawingStarted, " currentShape=", currentShape);
   const cursorPosition = document.getElementById('cursorPosition');
   
   const rect = canvas.getBoundingClientRect();
@@ -51,9 +55,9 @@ canvas.addEventListener('mousemove', (e) => {
     ctx.stroke();
 
     if (currentMode === 'segmentation') {
-      if (isDraggingHandle && currentShape) {
+      if (isDraggingHandle && currentShape && currentShape.type === 'ellipse') {
         const { x, y } = getMousePosition(e);
-        handleDragging(x, y);
+        handleDraggingEllipse(x, y, draggedHandleIndex, currentShape);
         redrawCanvas();
       } else if (drawingStarted) {
         // Drawing ellipse
@@ -101,14 +105,18 @@ canvas.addEventListener('mousemove', (e) => {
 });
 
 canvas.addEventListener('click', (e) => {
+  console.log("[DEBUG] canvas.click triggered");
   const rect = canvas.getBoundingClientRect();
   const mouseX = e.clientX - rect.left;
   const mouseY = e.clientY - rect.top;
+  console.log("[DEBUG] mouseX=", mouseX, " mouseY=", mouseY);
 
   if (mouseX >= xStart && mouseX <= xStart + renderableWidth &&
       mouseY >= yStart && mouseY <= yStart + renderableHeight) {
 
     if (currentMode === 'segmentation') {
+      // console.log("[DEBUG] segmentation mode click. drawingStarted=", 
+      //   drawingStarted, " currentShape=", currentShape);
       if (currentShape && !drawingStarted) {
         const { x, y } = getMousePosition(e);
         if (isPointInEllipse(x, y, currentShape)) {
@@ -118,11 +126,13 @@ canvas.addEventListener('click', (e) => {
         }
       } else if (!drawingStarted && !currentShape) {
         // Start drawing ellipse
+        console.log("[DEBUG] Starting ellipse: set drawingStarted=true");
         startX = mouseX;
         startY = mouseY;
         drawingStarted = true;
       } else if (drawingStarted && !currentShape) {
         // Finish ellipse
+        console.log("[DEBUG] Finishing ellipse. Will create transformMatrix shape.");
         endX = mouseX;
         endY = mouseY;
         drawingStarted = false;
@@ -131,6 +141,8 @@ canvas.addEventListener('click', (e) => {
         const rectStartY = Math.max(yStart, Math.min(startY, endY));
         const rectEndX = Math.min(xStart + renderableWidth, Math.max(startX, endX));
         const rectEndY = Math.min(yStart + renderableHeight, Math.max(startY, endY));
+        console.log("[DEBUG] bounding box in screen coords:", 
+          { rectStartX, rectStartY, rectEndX, rectEndY });
 
         const boxStartX = (rectStartX - xStart) / renderableWidth;
         const boxStartY = (rectStartY - yStart) / renderableHeight;
@@ -142,16 +154,24 @@ canvas.addEventListener('click', (e) => {
         const boxWidth = boxEndX - boxStartX;
         const boxHeight = boxEndY - boxStartY;
 
+        console.log("[DEBUG] bounding box in normalized coords:", 
+          { boxCenterX, boxCenterY, boxWidth, boxHeight });
+
+        // build a matrix
+        let M = identityMatrix();
+        M = multiply(M, translate(boxCenterX, boxCenterY));
+        M = multiply(M, scale(boxWidth/2, boxHeight/2));
+
         currentShape = {
           type: 'ellipse',
           classId: 0,
-          centerX: boxCenterX,
-          centerY: boxCenterY,
-          width: boxWidth,
-          height: boxHeight,
-          rotation: 0
+          localRadiusX: 1,
+          localRadiusY: 1,
+          transformMatrix: M,
+          handlePositions: []
         };
         isRotationMode = false;
+        console.log("[DEBUG] Created ellipse shape:", currentShape);
         redrawCanvas();
       }
     } else if (currentMode === 'detection') {

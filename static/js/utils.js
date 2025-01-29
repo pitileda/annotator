@@ -1,5 +1,5 @@
 import { HANDLE_SIZE } from "./constants.js";
-import { redrawCanvas } from "./drawing.js";
+import * as Matrix from './matrix.js';
 
 const canvas = document.getElementById('canvas');
 
@@ -50,78 +50,85 @@ export function getMousePosition(e) {
   return { x, y, mouseX, mouseY };
 }
 
-export function getHandleAtPoint(x, y) {
-  if (!currentShape) return -1;
+export function getEllipseHandleAtPoint(xNorm, yNorm, shape) {
+  console.log("getEllipseHandleAtPoint: Checking handles for shape:", shape);
+  const localHandles = shape.handlePositions;
 
-  const { centerX, centerY, width, height } = currentShape;
-  const boxCenterX = xStart + centerX * renderableWidth;
-  const boxCenterY = yStart + centerY * renderableHeight;
-  const boxWidth = width * renderableWidth;
-  const boxHeight = height * renderableHeight;
+  let minDist = Infinity;
+  let clickedIndex = -1;
 
-  const positions = [
-    { x: boxCenterX - boxWidth / 2, y: boxCenterY - boxHeight / 2 },
-    { x: boxCenterX + boxWidth / 2, y: boxCenterY - boxHeight / 2 },
-    { x: boxCenterX + boxWidth / 2, y: boxCenterY + boxHeight / 2 },
-    { x: boxCenterX - boxWidth / 2, y: boxCenterY + boxHeight / 2 }
-  ];
+  const mouseWX = xStart + xNorm * renderableWidth;
+  const mouseWY = yStart + yNorm * renderableHeight;
+  console.log(`--> Mouse worldX=${mouseWX.toFixed(2)}, worldY=${mouseWY.toFixed(2)}`);
 
-  for (let i = 0; i < positions.length; i++) {
-    const pos = positions[i];
-    const dx = (pos.x - (xStart + x * renderableWidth));
-    const dy = (pos.y - (yStart + y * renderableHeight));
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    if (distance <= HANDLE_SIZE / 2) {
-      return i; // Return the index of the handle
+  for (let i = 0; i < localHandles.length; i++) {
+    // Now we have world coords. Mouse in world coords is:
+    const mouseWX = xStart + xNorm * renderableWidth;
+    const mouseWY = yStart + yNorm * renderableHeight;
+
+    const dx = localHandles[i].x - mouseWX;
+    const dy = localHandles[i].y - mouseWY;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+
+
+    if (dist <= HANDLE_SIZE) {
+      if (dist < minDist) {
+        minDist = dist;
+        clickedIndex = i;
+      }
     }
   }
-  return -1;
+
+  console.log("getEllipseHandleAtPoint => handleIndex=", clickedIndex);
+  return clickedIndex;
 }
 
-export function handleDragging(x, y) {
-  if (draggedHandleIndex === -1 || !currentShape) return;
+function buildShearX(k) {
+  return [1, 0, k, 1, 0, 0]; 
+}
+function buildShearY(k) {
+  return [1, k, 0, 1, 0, 0];
+}
 
-  const { centerX, centerY, width, height } = currentShape;
+/**
+ * handleDraggingEllipse(xNorm, yNorm, handleIndex, shape)
+ *   - xNorm, yNorm: new mouse position in normalized image coords (0..1).
+ *   - handleIndex: which ellipse handle is dragged (0..7).
+ *   - shape: { type: 'ellipse', etc. }
+ */
+export function handleDraggingEllipse(xNorm, yNorm, handleIndex, shape) {
+  const invM = Matrix.invert(shape.transformMatrix);  // from matrix.js
+  const [mx, my] = Matrix.transformPoint(invM, xNorm, yNorm);
 
-  // Determine opposite corner (the corner diagonally across from the handle).
-  let oppositeX, oppositeY;
-  if (draggedHandleIndex === 0) { 
-    // top-left handle opposite corner is bottom-right
-    oppositeX = centerX + width / 2;
-    oppositeY = centerY + height / 2;
-  } else if (draggedHandleIndex === 1) {
-    // top-right handle opposite corner is bottom-left
-    oppositeX = centerX - width / 2;
-    oppositeY = centerY + height / 2;
-  } else if (draggedHandleIndex === 2) {
-    // bottom-right handle opposite corner is top-left
-    oppositeX = centerX - width / 2;
-    oppositeY = centerY - height / 2;
-  } else if (draggedHandleIndex === 3) {
-    // bottom-left handle opposite corner is top-right
-    oppositeX = centerX + width / 2;
-    oppositeY = centerY - height / 2;
+  let transform = null; // the incremental transform for each mouse-move
+
+  if (handleIndex >= 0 && handleIndex <= 3) {
+    const newDistX = Math.abs(mx);
+    const newDistY = Math.abs(my);
+
+    // Build a scale matrix
+    transform = [
+      newDistX, 0,
+      0, newDistY,
+      0, 0
+    ];
+
+  } else {
+    if (handleIndex === 4 || handleIndex === 6) {
+      const k = mx;  // or (mx - hx), etc.
+      transform = buildShearX(k);
+
+    } else if (handleIndex === 5 || handleIndex === 7) {
+      // right-center or left-center => shear in Y
+      const k = my; 
+      transform = buildShearY(k);
+    }
   }
 
-  // Calculate new dimensions from min and max values
-  const newMinX = Math.min(x, oppositeX);
-  const newMaxX = Math.max(x, oppositeX);
-  const newWidth = newMaxX - newMinX;
-  const newCenterX = (newMinX + newMaxX) / 2;
-
-  const newMinY = Math.min(y, oppositeY);
-  const newMaxY = Math.max(y, oppositeY);
-  const newHeight = newMaxY - newMinY;
-  const newCenterY = (newMinY + newMaxY) / 2;
-
-  // Update the currentShape with these new values
-  currentShape.width = newWidth;
-  currentShape.height = newHeight;
-  currentShape.centerX = newCenterX;
-  currentShape.centerY = newCenterY;
-
-  redrawCanvas();
+  if (!transform) return; // no transform => no change
+  shape.transformMatrix = Matrix.multiply(shape.transformMatrix, transform);
 }
+
 
 export function isPointInEllipse(x, y, shape) {
   const dx = x - shape.centerX;
@@ -164,38 +171,23 @@ export function shapeToPolygon(shape) {
     }
 
     case 'ellipse': {
-      // Approximate an ellipse with N points
-      const { centerX, centerY, width, height, rotation = 0 } = shape;
-      const rx = width / 2;   // "radius" in x direction
-      const ry = height / 2;  // "radius" in y direction
-      const numPoints = 36;   // how many segments to approximate
-
-      const points = [];
-      for (let i = 0; i < numPoints; i++) {
-        const theta = (2 * Math.PI * i) / numPoints;
-
-        // local coordinates (unrotated)
-        let lx = rx * Math.cos(theta);
-        let ly = ry * Math.sin(theta);
-
-        // apply rotation around (0,0) if shape has 'rotation'
-        if (rotation !== 0) {
-          const cosR = Math.cos(rotation);
-          const sinR = Math.sin(rotation);
-          // rotate (lx, ly)
-          const rx2 = lx * cosR - ly * sinR;
-          const ry2 = lx * sinR + ly * cosR;
-          lx = rx2;
-          ly = ry2;
-        }
-
-        // translate by center
-        const finalX = centerX + lx;
-        const finalY = centerY + ly;
-
-        points.push([finalX, finalY]);
+      // 1) create local circle => e.g. 36 points
+      const numPoints = 36;
+      const localPoints = [];
+      for (let i=0; i<numPoints; i++) {
+        const theta = 2*Math.PI*(i/numPoints);
+        const lx = shape.localRadiusX * Math.cos(theta);
+        const ly = shape.localRadiusY * Math.sin(theta);
+        localPoints.push([lx, ly]);
       }
-      return points;
+      // 2) transform each local point => world coords
+      const [a,b,c,d,e,f] = shape.transformMatrix;
+      const polygon = localPoints.map(([lx, ly]) => {
+        const X = a*lx + c*ly + e;
+        const Y = b*lx + d*ly + f;
+        return [X, Y];
+      });
+      return polygon;
     }
 
     default:
